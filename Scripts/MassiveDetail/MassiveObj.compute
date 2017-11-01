@@ -1,0 +1,146 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+struct propDataInstance
+{
+	float4x4 modelWorld;
+	float3 dirc;
+	//float3 tang;
+	bool visible;
+};
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWStructuredBuffer<propDataInstance> buffer;
+float startTime;
+float4 playerPos;
+float4 gridCameraPos;
+float4 cameraDirc;
+
+float4 orthoCameraPos;
+float orthoCameraSize;
+float orthoCameraFar;
+float orthoCameraNear;
+
+float stepLenth, stepCountf, squareSize, halfSquareSize, halfIgnoreSize, rndRange, halfRndRange;
+int stepCount;
+
+Texture2D RandomImg;
+SamplerState samplerRandomImg;
+
+Texture2D HeightMap;
+SamplerState samplerHeightMap;
+
+Texture2D DenseMap;
+SamplerState samplerDenseMap;
+
+[numthreads(256,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+	// float2 coord = float2(float(id.x / 100) / 100.0f, float(id.x % 100) / 100.0f);
+	float2 coord = float2(float(id.x / stepCount) / stepCountf, float(id.x % stepCount) / stepCountf);
+
+	float4 pos = float4(
+		squareSize * coord.x - halfSquareSize,
+		0,
+		squareSize * coord.y - halfSquareSize,
+		1);
+
+	if(abs(pos.x) <= halfIgnoreSize && abs(pos.z) <= halfIgnoreSize)
+	{
+		buffer[id.x].visible = false;
+		return;
+	}
+
+	pos.x += stepLenth * int(playerPos.x / stepLenth);
+	pos.z += stepLenth * int(playerPos.z / stepLenth);
+
+	float2 rndCoord = float2(int(pos.x / stepLenth) / 160.0f, int(pos.z / stepLenth) / 160.0f);
+
+	float3 offset = RandomImg.SampleLevel(samplerRandomImg, rndCoord, 0).xyz;
+
+	pos.x += halfRndRange + rndRange * offset.x;// + sin(startTime);//x pos
+	pos.z += halfRndRange + rndRange * offset.z;// + cos(startTime);//z pos
+
+	coord = float2(pos.x - orthoCameraPos.x + orthoCameraSize, pos.z - orthoCameraPos.z + orthoCameraSize) / (2.0f * orthoCameraSize);
+
+	float depth = HeightMap.SampleLevel(samplerHeightMap, coord, 0).x;
+	float dense = DenseMap.SampleLevel(samplerDenseMap, coord, 0).x;
+
+	if(depth <= 0.01f || dense <= 0.2f || coord.x < 0.0f || coord.x > 1.0f || coord.y < 0.0f || coord.y > 1.0f)
+	{
+		buffer[id.x].visible = false;
+		return;
+	}
+
+	pos.y = orthoCameraPos.y - orthoCameraFar + depth * (orthoCameraFar - orthoCameraNear);
+	// pos.y = depth * 120.0f + 0.2f;
+
+	if(dot(normalize(pos - gridCameraPos), cameraDirc) < 0.5)
+	{
+		buffer[id.x].visible = false;
+		return;
+	}
+
+	/*if(sin(id.x) <= 0) {buffer[id.x].visible = false; return;}*/
+	buffer[id.x].visible = true;
+
+	//Direction
+
+	float randTime = startTime + 0.1f * offset.z;
+
+	float3 dirc = float3(0, 1, 0) - 0.15f + 0.3f * RandomImg.SampleLevel(samplerRandomImg, 1.5 * rndCoord, 0).xyz;
+	float shake =
+		0.4f * (0.8f + sin(randTime * 0.3 + 0.1f * (pos.z))) +
+		0.7f * (0.7f + sin(randTime * 1.0 + 0.3f * (pos.z))) +
+		0.4f * (0.5f + sin(randTime * 4.0 + 0.07f * (pos.z))) +
+		0.5f * (0.3f + sin(randTime * 8.0 + 0.17f * (pos.z)));
+	float3 windDirc = float3(0, 0, 1);
+	dirc = dirc + 0.4f * shake * windDirc;
+
+	//Player pos
+	float3 posDiff = pos.xyz - playerPos.xyz;
+	//posDiff.y = 0;
+	float factor = max(0, 1.5f - length(posDiff));
+
+	/*if(factor > 0.1f)
+	{
+		buffer[id.x].visible = false; return;
+	}*/
+
+	dirc -= posDiff * factor;
+
+	dirc = normalize(dirc);
+	buffer[id.x].dirc = dirc;
+
+	/*float3 tang = float3(dirc.y, -dirc.x, 0);*/
+
+	/*float4x4 modelModel = {1, dirc.x, 0, 0, 0, dirc.y, 0, 0, 0, 0, dirc.z, 0, 0, 0, 0, 1};*/
+
+	//Init
+
+	buffer[id.x].modelWorld = float4x4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+
+	//Rotate
+	float rotateAngleY = 6.28319 * RandomImg.SampleLevel(samplerRandomImg, 2*rndCoord, 0).x;
+
+	buffer[id.x].modelWorld[0].xyz = float3(cos(rotateAngleY), 0, sin(rotateAngleY));
+	buffer[id.x].modelWorld[2].xyz = float3(-sin(rotateAngleY), 0, cos(rotateAngleY));
+
+	//Scaling
+
+	float scale = 1.0f + 0.3f * RandomImg.SampleLevel(samplerRandomImg, 3*rndCoord, 0).x;
+	scale *= clamp(1.4f - factor, 0.0, 1.0);
+
+	buffer[id.x].modelWorld = mul(buffer[id.x].modelWorld, float4x4(scale, 0, 0, 0, 0, scale * dense, 0, 0, 0, 0, scale, 0, 0, 0, 0, 1));
+
+	//Direction
+
+	/*buffer[id.x].modelWorld = mul(modelModel, buffer[id.x].modelWorld);*/
+
+	//Position
+
+	buffer[id.x].modelWorld[0][3] = pos.x;//x pos
+	buffer[id.x].modelWorld[1][3] = pos.y;//y pos
+	buffer[id.x].modelWorld[2][3] = pos.z;//z pos
+}
