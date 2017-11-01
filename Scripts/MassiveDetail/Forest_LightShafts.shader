@@ -1,4 +1,6 @@
-﻿Shader "Unlit/Forest_LightShafts"
+﻿// Upgrade NOTE: replaced 'mul(UNITY_MATRIX_MVP,*)' with 'UnityObjectToClipPos(*)'
+
+Shader "Unlit/Forest_LightShafts"
 {
 	Properties
 	{
@@ -56,7 +58,7 @@
 					o.vertex.x *= 2.0;
 				else
 					o.vertex.x *= 0.3;*/
-				o.vertex = mul(UNITY_MATRIX_MVP, o.vertex);
+				o.vertex = UnityObjectToClipPos(o.vertex);
 				o.uv = v.uv;
 				UNITY_TRANSFER_FOG(o,o.vertex);
 				return o;
@@ -81,7 +83,7 @@
 				float4 finalColor = ShaftMainColor;
 				finalColor.a = max(0.0, (1.0 - (1.0 - i.uv.y) * (1.0 + 0.5 * strength.r)));
 				finalColor.a *= 1.0 - pow(5.0 * (max(0.0, i.uv.x - 0.8) + max(0.0, 0.2 - i.uv.x)), 2.0);
-				finalColor.a *= 1.0 - (max(0.0, i.uv.y - 0.85) / 0.15);
+				finalColor.a *= 1.0 - (max(0.0, i.uv.y - 0.5) / 0.35);
 
 				finalColor.a *= 0.6;
 				// apply fog
